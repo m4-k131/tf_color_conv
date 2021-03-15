@@ -37,6 +37,7 @@ def get_conversion_fn(colorspace='yuv'):
     def rgb2lab(img):
         img=experimental.color.rgb_to_lab(img).numpy()
         img/=cs_array
+        return img
 
     def lab2rgb(image):
         img=image*cs_array
