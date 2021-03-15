@@ -1,5 +1,7 @@
 # tf_color_conv
 Colorspace conversion functions for Tensorflow.
+Rescale & shift the build-in conversion functions' outputs to range([0,1],[-1,1],[-1,1]) for easy usage
+in e.g a colorization-model.
 
 RGB inputs must be in range[0,1] to work properly.
 
