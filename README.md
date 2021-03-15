@@ -13,6 +13,10 @@ tensorflow_io is required for LAB conversions
 Colorspace2RGB functions expect a Tensor (yuv/lab2rgb also can take a NumPy-array), while RGB2Colorspace functions can take a NumPy-arrays or Tensors. All functions return a NumPy-array.
 
 
-get_conversion_fn(colorspace):
+Usage:
+
+rgb2cs, cs2rgb=get_conversion_fn(colorspace)
+
 param str colorspace: lab, yuv or hsv
+
 Returns the corrosponding rgb2cs and cs2rgb function
