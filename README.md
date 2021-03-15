@@ -7,6 +7,8 @@ Outputs are in range[0,1] for the L/Y/V (lightness)-channel and [-1,1] for the c
 
 H & V channel for HSV in- and outputs are swapped, so that the Lightness-channel is always the first channel regardless of colorspace.
 
+tensorflow_io is required for LAB conversions
+
 
 Colorspace2RGB functions expect a Tensor (yuv/lab2rgb also can take a NumPy-array), while RGB2Colorspace functions can take a NumPy-arrays or Tensors. All functions return a NumPy-array.
 
