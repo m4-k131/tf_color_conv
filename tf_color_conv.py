@@ -27,7 +27,7 @@ def get_conversion_fn(colorspace='yuv'):
     Returns the corrosponding rgb2cs and cs2rgb function
     """
     lab_array=np.array([100., 128., 128.])
-    yh_array=np.array([[1., 2., 2.]])
+    yh_array=np.array([1., 2., 2.])
 
     if colorspace=='lab':
         cs_array=lab_array
