@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-#@author: Malte Kleine
+# @author: Malte Kleine
 
 """
 Colorspace conversion functions for Tensorflow.
@@ -8,63 +8,265 @@ RGB inputs must be in range[0,1] to work properly.
 Outputs are in range[0,1] for the L/Y/V (lightness)-channel and [-1,1] for the color channels.
 H & V channel for HSV in- and outputs are swapped, so that the Lightness-channel is always the first channel regardless of colorspace.
 
-Colorspace2RGB functions expect a Tensor (yuv/lab2rgb also can take a NumPy-array), while RGB2Colorspace functions can take a NumPy-arrays or Tensors. All functions return a NumPy-array.
-
 """
 
-
-from tensorflow import image 
-try:
-    from tensorflow_io import experimental
-except:
-    print('Warning: tensorflow_io not installed. This package is needed for rgb->lab and lab->rgb conversion. Install tensorflow_io or use YUV and HSV colorspaces')
+import tensorflow as tf
+from tensorflow import image
 import numpy as np
+from keras.preprocessing.image import ImageDataGenerator
 
 
+def rgb_to_xyz(input, name=None):
+    """
+    Convert a RGB image to CIE XYZ.
+    Args:
+      input: A 3-D (`[H, W, 3]`) or 4-D (`[N, H, W, 3]`) Tensor.
+      name: A name for the operation (optional).
+    Returns:
+      A 3-D (`[H, W, 3]`) or 4-D (`[N, H, W, 3]`) Tensor.
+    """
+    input = tf.convert_to_tensor(input)
+    assert input.dtype in (tf.float16, tf.float32, tf.float64)
 
-lab_array=np.array([100., 128., 128.])
-yh_array=np.array([1., 2., 2.])
+    kernel = tf.constant(
+        [
+            [0.412453, 0.357580, 0.180423],
+            [0.212671, 0.715160, 0.072169],
+            [0.019334, 0.119193, 0.950227],
+        ],
+        input.dtype,
+    )
+    value = tf.where(
+        tf.math.greater(input, 0.04045),
+        tf.math.pow((input + 0.055) / 1.055, 2.4),
+        input / 12.92,
+    )
+    return tf.tensordot(value, tf.transpose(kernel), axes=((-1,), (0,)))
+
+
+def xyz_to_rgb(input, name=None):
+    """
+    Convert a CIE XYZ image to RGB.
+    Args:
+      input: A 3-D (`[H, W, 3]`) or 4-D (`[N, H, W, 3]`) Tensor.
+      name: A name for the operation (optional).
+    Returns:
+      A 3-D (`[H, W, 3]`) or 4-D (`[N, H, W, 3]`) Tensor.
+    """
+    input = tf.convert_to_tensor(input)
+    assert input.dtype in (tf.float16, tf.float32, tf.float64)
+
+    # inv of:
+    # [[0.412453, 0.35758 , 0.180423],
+    #  [0.212671, 0.71516 , 0.072169],
+    #  [0.019334, 0.119193, 0.950227]]
+    kernel = tf.constant(
+        [
+            [3.24048134, -1.53715152, -0.49853633],
+            [-0.96925495, 1.87599, 0.04155593],
+            [0.05564664, -0.20404134, 1.05731107],
+        ],
+        input.dtype,
+    )
+    value = tf.tensordot(input, tf.transpose(kernel), axes=((-1,), (0,)))
+    value = tf.where(
+        tf.math.greater(value, 0.0031308),
+        tf.math.pow(value, 1.0 / 2.4) * 1.055 - 0.055,
+        value * 12.92,
+    )
+    return tf.clip_by_value(value, 0, 1)
+
+
+def rgb_to_lab(input, illuminant="D65", observer="2", name=None):
+    """
+    Convert a RGB image to CIE LAB.
+    Args:
+      input: A 3-D (`[H, W, 3]`) or 4-D (`[N, H, W, 3]`) Tensor.
+      illuminant : {"A", "D50", "D55", "D65", "D75", "E"}, optional
+        The name of the illuminant (the function is NOT case sensitive).
+      observer : {"2", "10"}, optional
+        The aperture angle of the observer.
+      name: A name for the operation (optional).
+    Returns:
+      A 3-D (`[H, W, 3]`) or 4-D (`[N, H, W, 3]`) Tensor.
+    """
+    input = tf.convert_to_tensor(input)
+    assert input.dtype in (tf.float16, tf.float32, tf.float64)
+
+    illuminants = {
+        "A": {
+            "2": (1.098466069456375, 1, 0.3558228003436005),
+            "10": (1.111420406956693, 1, 0.3519978321919493),
+        },
+        "D50": {
+            "2": (0.9642119944211994, 1, 0.8251882845188288),
+            "10": (0.9672062750333777, 1, 0.8142801513128616),
+        },
+        "D55": {
+            "2": (0.956797052643698, 1, 0.9214805860173273),
+            "10": (0.9579665682254781, 1, 0.9092525159847462),
+        },
+        "D65": {
+            "2": (0.95047, 1.0, 1.08883),
+            "10": (0.94809667673716, 1, 1.0730513595166162),
+        },
+        "D75": {
+            "2": (0.9497220898840717, 1, 1.226393520724154),
+            "10": (0.9441713925645873, 1, 1.2064272211720228),
+        },
+        "E": {"2": (1.0, 1.0, 1.0), "10": (1.0, 1.0, 1.0)},
+    }
+    coords = tf.constant(
+        illuminants[illuminant.upper()][observer], input.dtype)
+
+    xyz = rgb_to_xyz(input)
+
+    xyz = xyz / coords
+
+    xyz = tf.where(
+        tf.math.greater(xyz, 0.008856),
+        tf.math.pow(xyz, 1.0 / 3.0),
+        xyz * 7.787 + 16.0 / 116.0,
+    )
+
+    xyz = tf.unstack(xyz, axis=-1)
+    x, y, z = xyz[0], xyz[1], xyz[2]
+
+    # Vector scaling
+    l = (y * 116.0) - 16.0
+    a = (x - y) * 500.0
+    b = (y - z) * 200.0
+
+    return tf.stack([l, a, b], axis=-1)
+
+
+def lab_to_rgb(input, illuminant="D65", observer="2", name=None):
+    """
+    Convert a CIE LAB image to RGB.
+    Args:
+      input: A 3-D (`[H, W, 3]`) or 4-D (`[N, H, W, 3]`) Tensor.
+      illuminant : {"A", "D50", "D55", "D65", "D75", "E"}, optional
+        The name of the illuminant (the function is NOT case sensitive).
+      observer : {"2", "10"}, optional
+        The aperture angle of the observer.
+      name: A name for the operation (optional).
+    Returns:
+      A 3-D (`[H, W, 3]`) or 4-D (`[N, H, W, 3]`) Tensor.
+    """
+    input = tf.convert_to_tensor(input)
+    assert input.dtype in (tf.float16, tf.float32, tf.float64)
+
+    lab = input
+    lab = tf.unstack(lab, axis=-1)
+    l, a, b = lab[0], lab[1], lab[2]
+
+    y = (l + 16.0) / 116.0
+    x = (a / 500.0) + y
+    z = y - (b / 200.0)
+
+    z = tf.math.maximum(z, 0)
+
+    xyz = tf.stack([x, y, z], axis=-1)
+
+    xyz = tf.where(
+        tf.math.greater(xyz, 0.2068966),
+        tf.math.pow(xyz, 3.0),
+        (xyz - 16.0 / 116.0) / 7.787,
+    )
+
+    illuminants = {
+        "A": {
+            "2": (1.098466069456375, 1, 0.3558228003436005),
+            "10": (1.111420406956693, 1, 0.3519978321919493),
+        },
+        "D50": {
+            "2": (0.9642119944211994, 1, 0.8251882845188288),
+            "10": (0.9672062750333777, 1, 0.8142801513128616),
+        },
+        "D55": {
+            "2": (0.956797052643698, 1, 0.9214805860173273),
+            "10": (0.9579665682254781, 1, 0.9092525159847462),
+        },
+        "D65": {
+            "2": (0.95047, 1.0, 1.08883),
+            "10": (0.94809667673716, 1, 1.0730513595166162),
+        },
+        "D75": {
+            "2": (0.9497220898840717, 1, 1.226393520724154),
+            "10": (0.9441713925645873, 1, 1.2064272211720228),
+        },
+        "E": {"2": (1.0, 1.0, 1.0), "10": (1.0, 1.0, 1.0)},
+    }
+    coords = tf.constant(
+        illuminants[illuminant.upper()][observer], input.dtype)
+
+    xyz = xyz * coords
+
+    return xyz_to_rgb(xyz)
+
+
+lab_array = np.array([100., 128., 128.])
+yh_array = np.array([1., 2., 2.])
 
 
 
 def rgb2lab(img):
-    img=experimental.color.rgb_to_lab(img).numpy()
-    img/=lab_array
+    img = rgb_to_lab(img)
+    img /= lab_array
     return img
 
+
 def lab2rgb(image):
-    img=image*lab_array
-    img=experimental.color.lab_to_rgb(img).numpy()
+    img = image*lab_array
+    img = lab_to_rgb(img)
     return img
 
 
 def rgb2yuv(img):
-    img=image.rgb_to_yuv(img).numpy()
-    img*=yh_array
+    img = image.rgb_to_yuv(img)
+    img *= yh_array
     return img
-    
+
+
 def yuv2rgb(img):
-    img/=yh_array
-    img=image.yuv_to_rgb(img).numpy()
+    img /= yh_array
+    img = image.yuv_to_rgb(img)
     return img
 
 
-def rgb2hsv(img):
-    img=image.rgb_to_hsv(img).numpy()
-    v_channel=img[...,2].copy()
-    img[...,2]=img[...,0]
-    img[...,0]=v_channel
-    img*=yh_array
-    img[...,1:]-=1
+def rgb2vsh(img):
+    img = image.rgb_to_hsv(img).numpy()
+    img = np.flip(img, -1)
+
+    img *= yh_array
+    img[..., 1:] -= 1
     return img
 
-def hsv2rgb(img):
-    img=img.numpy()
-    img[...,1:]+=1
-    img/=yh_array
-    v_channel=img[...,0].copy()
-    img[...,0]=img[...,2]
-    img[...,2]=v_channel
-    img=image.hsv_to_rgb(img).numpy()
+
+def vsh2rgb(img):
+    img = img.numpy()
+    img[..., 1:] += 1
+    img /= yh_array
+    img = np.flip(img, -1)
+    img = image.hsv_to_rgb(img)
     return img
 
+
+class cs_iterator:
+
+    def __init__(self, ds_path, H=192, W=192, BATCH_SIZE=4, rgb2cs=rgb2lab):
+        self.train_datagen = ImageDataGenerator(
+            rescale=1./255, horizontal_flip=True)
+        self.train = self.train_datagen.flow_from_directory(
+            ds_path, target_size=(H, W), batch_size=BATCH_SIZE, class_mode=None)
+        self.rgb2cs = rgb2cs
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+
+        cs_batch = self.rgb2cs(next(self.train))
+        l_c=tf.slice(cs_batch, begin=[0,0,0,0], size=[cs_batch.shape[0], cs_batch.shape[1], cs_batch.shape[2], 1])
+        c_c=tf.slice(cs_batch, begin=[0,0,0,1], size=[cs_batch.shape[0], cs_batch.shape[1], cs_batch.shape[2], 2])
+        return (l_c, c_c)
